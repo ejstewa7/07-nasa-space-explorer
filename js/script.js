@@ -48,37 +48,121 @@ button.addEventListener('click', () => {
   button.textContent = 'Generating Images...';
   button.disabled = true;
 
-  const apiUrl = `https://api.nasa.gov/planetary/apod?api_key=nbwMnTbd9HrjzbfHwMwwCDz8CNpGJH6mGGjPnmWW&start_date=${startDate}&end_date=${endDate}`;
-
-  // Try NASA twice, and stop waiting after 20 seconds per attempt.
-  function getNASAImages(url, attempt = 1) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
-
-    return fetch(url, { signal: controller.signal })
+  // Use NASA's APOD RSS feed because the older JSON API currently
+  // returns placeholder NASA Science entries.
+  function getNASAFeed(startDate, endDate) {
+    return fetch('https://science.nasa.gov/feed/apod-basic/')
       .then((response) => {
         if (!response.ok) {
           throw new Error('NASA could not load the space images.');
         }
-        return response.json();
+        return response.text();
       })
-      .catch((error) => {
-        if (attempt === 1) {
-          return getNASAImages(url, 2);
+      .then((feedText) => {
+        const feed = new DOMParser().parseFromString(feedText, 'application/xml');
+        const feedItems = feed.getElementsByTagName('item');
+        const items = [];
+
+        for (const item of feedItems) {
+          const title = item.getElementsByTagName('title')[0]?.textContent;
+          const link = item.getElementsByTagName('apod:url')[0]?.textContent;
+          const imageUrl = item.getElementsByTagName('apod:hdurl')[0]?.textContent;
+          const explanationHtml = item.getElementsByTagName('apod:explanation')[0]?.textContent;
+          const pubDate = item.getElementsByTagName('pubDate')[0]?.textContent;
+
+          if (!title || !imageUrl || !pubDate) {
+            continue;
+          }
+
+          const date = new Date(pubDate);
+          const dateText = date.toISOString().split('T')[0];
+
+          if (dateText >= startDate && dateText <= endDate) {
+            const explanationElement = document.createElement('div');
+            explanationElement.innerHTML = explanationHtml || '';
+
+            items.push({
+              title,
+              url: imageUrl,
+              hdurl: imageUrl,
+              date: dateText,
+              explanation: explanationElement.textContent.trim(),
+              media_type: 'image',
+              link,
+            });
+          }
         }
 
-        if (error.name === 'AbortError') {
-          throw new Error('NASA took too long to respond. Please try again.');
-        }
-        throw error;
-      })
-      .finally(() => {
-        clearTimeout(timeoutId);
+        return items;
       });
   }
 
-  getNASAImages(apiUrl)
-    .then((data) => {
+  function getNASAArchive(startDate, endDate) {
+    const nextDay = new Date(`${endDate}T00:00:00`);
+    nextDay.setDate(nextDay.getDate() + 1);
+    const after = encodeURIComponent(`${startDate}T00:00:00`);
+    const before = encodeURIComponent(`${nextDay.toISOString().split('T')[0]}T00:00:00`);
+    const url = `https://science.nasa.gov/wp-json/wp/v2/image-article?after=${after}&before=${before}&per_page=100&orderby=date&order=desc&_fields=id,date,slug,title,link,content,excerpt`;
+
+    return fetch(url)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('NASA could not load the image archive.');
+        }
+        return response.json();
+      })
+      .then((records) => {
+        const items = [];
+
+        for (const record of records) {
+          if (!record.slug || !record.slug.startsWith('apod-')) {
+            continue;
+          }
+
+          const content = document.createElement('div');
+          content.innerHTML = record.content?.rendered || '';
+          const image = Array.from(content.querySelectorAll('img')).find((element) => {
+            const source = element.src || element.getAttribute('src') || '';
+            return source.includes('assets.science.nasa.gov') &&
+              !source.includes('nasa-logo');
+          });
+
+          if (!image) {
+            continue;
+          }
+
+          const titleElement = document.createElement('div');
+          titleElement.innerHTML = record.title?.rendered || '';
+          const titleWithDate = titleElement.textContent.trim();
+          const title = titleWithDate.replace(/^APOD:\s*\d{4}\s+\w+\s+\d+\s+[–-]\s*/i, '');
+
+          const excerptElement = document.createElement('div');
+          excerptElement.innerHTML = record.excerpt?.rendered || '';
+          const explanation = excerptElement.textContent.trim();
+          const imageUrl = image.src || image.getAttribute('src');
+
+          items.push({
+            title: title || record.slug,
+            url: imageUrl,
+            hdurl: imageUrl,
+            date: record.date.split('T')[0],
+            explanation,
+            media_type: 'image',
+          });
+        }
+
+        return items;
+      });
+  }
+
+  getNASAArchive(startDate, endDate)
+    .then(async (archiveItems) => {
+      let data = archiveItems;
+
+      if (data.length === 0) {
+        data = await getNASAFeed(startDate, endDate);
+      }
+
       gallery.innerHTML = '';
 
       if (!Array.isArray(data)) {
@@ -90,9 +174,20 @@ button.addEventListener('click', () => {
         return;
       }
 
-      data.reverse();
+      const usableItems = data.filter((item) => {
+        if (!item.url || item.title === 'NASA Science') {
+          return false;
+        }
 
-      data.slice(0, 9).forEach((item) => {
+        return !item.url.includes('nasa-logo@2x.png');
+      });
+
+      if (usableItems.length === 0) {
+        gallery.innerHTML = '<p>No images were found for this date range.</p>';
+        return;
+      }
+
+      usableItems.slice(0, 9).forEach((item) => {
         const card = document.createElement('div');
         card.className = 'gallery-item';
 
@@ -137,7 +232,9 @@ button.addEventListener('click', () => {
         }
 
         const title = document.createElement('p');
-        title.innerHTML = `<strong>${item.title}</strong>`;
+        const titleText = document.createElement('strong');
+        titleText.textContent = item.title;
+        title.appendChild(titleText);
 
         const date = document.createElement('p');
         date.textContent = item.date;

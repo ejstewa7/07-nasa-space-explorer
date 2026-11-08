@@ -115,6 +115,7 @@ button:hover {
   min-width: 280px;
   max-width: 500px;
   background: white;
+  color: #000000;
   padding: 10px;
   border-radius: 8px;
   box-shadow: 0 2px 5px rgba(0,0,0,0.1);
@@ -159,6 +160,11 @@ button:hover {
   margin-top: 10px;
   padding: 5px;
   font-size: 14px;
+  color: #000000;
+}
+
+.gallery-item strong {
+  color: #000000;
 }
 
 /* Placeholder content */
