@@ -27,4 +27,12 @@ function setupDateInputs(startInput, endInput) {
     endDate.setDate(startDate.getDate() + 8);
     endInput.value = endDate > new Date(today) ? today : endDate.toISOString().split('T')[0];
   });
+
+  // Keep the selected range at exactly 9 consecutive days
+  endInput.addEventListener('change', () => {
+    const endDate = new Date(endInput.value);
+    const startDate = new Date(endDate);
+    startDate.setDate(endDate.getDate() - 8);
+    startInput.value = startDate < new Date(earliestDate) ? earliestDate : startDate.toISOString().split('T')[0];
+  });
 }
